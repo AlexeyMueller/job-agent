@@ -1,0 +1,9 @@
+# Copy to config.yaml and adjust. config.yaml is git-ignored.
+search:
+  keywords: ["QA Engineer", "Software Tester"]
+  location: "Frankfurt am Main"
+  radius_km: 50
+  remote_ok: true
+  exclude_keywords: ["Praktikum", "Werkstudent"]
+scoring:
+  min_score: 70

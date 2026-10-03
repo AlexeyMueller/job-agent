@@ -1,0 +1,14 @@
+# Copy to profile.yaml and fill in YOUR real facts. profile.yaml is git-ignored.
+# The agent may only use facts from this file. It must never invent experience.
+name: "Your Name"
+headline: "QA Engineer"
+languages:
+  - {name: "English", level: "C1"}
+experience:
+  - company: "Example GmbH"
+    role: "QA Engineer"
+    start: "2021-01"
+    end: "2025-01"
+    facts:
+      - "Wrote and executed regression suites for a web and mobile product."
+skills: ["Postman", "Jira", "SQL"]
