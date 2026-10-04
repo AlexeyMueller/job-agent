@@ -1,6 +1,11 @@
+import os
+
 import typer
+from dotenv import load_dotenv
 
 from job_agent import __version__
+from job_agent.profile import load_profile
+from job_agent.scorer import DEFAULT_MODEL, Scorer
 from job_agent.sources.bundesagentur import BundesagenturClient
 
 app = typer.Typer(help="AI-assisted job search agent.")
@@ -9,6 +14,7 @@ app = typer.Typer(help="AI-assisted job search agent.")
 @app.callback()
 def main() -> None:
     """job-agent command line interface."""
+    load_dotenv()
 
 
 @app.command()
@@ -48,3 +54,33 @@ def show(
     description = job.description or ""
     typer.echo(f"Description ({len(description)} chars):")
     typer.echo(description[:chars])
+
+
+@app.command()
+def score(
+    ref: str = typer.Argument(..., help="Reference number of the vacancy"),
+    model: str = typer.Option(DEFAULT_MODEL, help="Claude model used for scoring"),
+    profile_path: str = typer.Option("profile.yaml", "--profile", help="Path to profile.yaml"),
+) -> None:
+    """Score one vacancy against your profile."""
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        typer.echo("ANTHROPIC_API_KEY is not set. Put it in a .env file (see .env.example).")
+        raise typer.Exit(code=1)
+    profile = load_profile(profile_path)
+    job = BundesagenturClient().get_details(ref)
+    result = Scorer(model=model).score(job, profile)
+    typer.echo(f"{job.title} | {job.employer} | {job.location}")
+    typer.echo(f"Link: {job.url}")
+    typer.echo(f"Score: {result.score}/100 | Apply: {'yes' if result.apply else 'no'}")
+    typer.echo(result.summary)
+    for title, items in (
+        ("Matches", result.match_reasons),
+        ("Gaps", result.gaps),
+        ("Red flags", result.red_flags),
+    ):
+        if items:
+            typer.echo(f"{title}:")
+            for item in items:
+                typer.echo(f"  - {item}")
+    if result.language_requirement:
+        typer.echo(f"Language: {result.language_requirement}")
