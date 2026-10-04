@@ -1,9 +1,39 @@
 # Copy to config.yaml and adjust. config.yaml is git-ignored.
+# Any key you leave out falls back to the default shown here.
 search:
-  keywords: ["QA Engineer", "Software Tester"]
+  keywords: ["QA Engineer", "Software Tester", "QA Analyst"]
   location: "Frankfurt am Main"
-  radius_km: 50
-  remote_ok: true
+  radius_km: 50            # commuting radius; farther away counts as relocation
+  published_within_days: 14
   exclude_keywords: ["Praktikum", "Werkstudent"]
+  max_per_query: 25
+  nationwide_requires_home_office: true   # nationwide search keeps only home-office vacancies
 scoring:
-  min_score: 70
+  model: "claude-sonnet-5-5"
+  min_score: 60
+  max_new_per_run: 40      # safety cap on paid scoring calls per run
+  adjustments:             # points subtracted from the model's score; remote is never reduced
+    mostly_remote_local: -3     # roughly 70%+ remote
+    mostly_remote_relocation: -10
+    hybrid_local: -10
+    onsite_local: -15
+    hybrid_relocation: -20
+    onsite_relocation: -30
+  # Skills you lack. A vacancy that REQUIRES one (not "von Vorteil"/nice to have) loses points.
+  # Give German and English names; Claude matches synonyms too.
+  skill_penalty: -10       # per required skill
+  max_skill_penalty: -30   # total cap
+  avoid_skills:
+    - name: "Penetration testing"
+      aliases: ["Penetration testing", "Pentest", "Penetrationstest", "Penetrationstests",
+                "Security testing", "Sicherheitstest", "Sicherheitstests"]
+    - name: "Load and performance testing"
+      aliases: ["Load testing", "Performance testing", "Stress testing", "Lasttest", "Lasttests",
+                "Performancetest", "Performancetests", "Stresstest", "Belastungstest",
+                "JMeter", "Gatling", "k6", "Locust"]
+    - name: "Selenium, Cypress, Appium"
+      aliases: ["Selenium", "Cypress", "Appium"]
+      exception: >
+        Not required if the vacancy accepts or names Playwright, for example
+        'Playwright, Selenium or similar'. Required only if it demands one of
+        these tools and does not accept Playwright.

@@ -5,6 +5,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from job_agent.config import AvoidSkill
 from job_agent.models import Job
 from job_agent.scorer import Scorer, ScorerError, ScoreResult
 
@@ -158,3 +159,45 @@ def test_system_prompt_tells_model_to_ignore_education_requirements():
     Scorer(client=client).score(JOB, PROFILE)
     system = client.messages.last_kwargs["system"]
     assert "IGNORE formal education requirements" in system
+
+
+def test_omitted_lists_default_to_empty():
+    data = {k: v for k, v in GOOD_INPUT.items() if k not in ("gaps", "red_flags")}
+    result = Scorer(client=FakeClient([tool_block(data)])).score(JOB, PROFILE)
+    assert result.gaps == []
+    assert result.red_flags == []
+
+
+def test_avoid_skills_are_sent_to_the_model_with_aliases():
+    client = FakeClient([tool_block(GOOD_INPUT)])
+    skills = [AvoidSkill(name="Penetration testing", aliases=["Pentest", "Penetrationstest"])]
+    Scorer(client=client, avoid_skills=skills).score(JOB, PROFILE)
+    message = client.messages.last_kwargs["messages"][0]["content"]
+    assert "<skills_candidate_lacks>" in message
+    assert "Penetration testing: Pentest, Penetrationstest" in message
+    assert "required_avoided_skills" in client.messages.last_kwargs["system"]
+
+
+def test_no_avoid_block_when_list_is_empty():
+    client = FakeClient([tool_block(GOOD_INPUT)])
+    Scorer(client=client).score(JOB, PROFILE)
+    assert "skills_candidate_lacks" not in client.messages.last_kwargs["messages"][0]["content"]
+
+
+def test_required_avoided_skills_are_parsed_and_default_empty():
+    data = {**GOOD_INPUT, "required_avoided_skills": ["Penetration testing"]}
+    result = Scorer(client=FakeClient([tool_block(data)])).score(JOB, PROFILE)
+    assert result.required_avoided_skills == ["Penetration testing"]
+    plain = Scorer(client=FakeClient([tool_block(GOOD_INPUT)])).score(JOB, PROFILE)
+    assert plain.required_avoided_skills == []
+
+
+def test_exception_text_is_sent_with_the_skill():
+    client = FakeClient([tool_block(GOOD_INPUT)])
+    skills = [
+        AvoidSkill(name="Selenium", aliases=["Selenium"], exception="Not required if Playwright")
+    ]
+    Scorer(client=client, avoid_skills=skills).score(JOB, PROFILE)
+    message = client.messages.last_kwargs["messages"][0]["content"]
+    assert "- Selenium: Selenium [exception: Not required if Playwright]" in message
+    assert "[exception:" in client.messages.last_kwargs["system"]
