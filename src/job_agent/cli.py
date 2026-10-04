@@ -32,3 +32,19 @@ def search(
     for job in jobs:
         typer.echo(f"{job.title} | {job.employer} | {job.location} | {job.published} | {job.ref}")
     typer.echo(f"{len(jobs)} result(s)")
+
+
+@app.command()
+def show(
+    ref: str = typer.Argument(..., help="Reference number, e.g. 10001-1003569047-S"),
+    chars: int = typer.Option(1500, help="How many characters of the description to print"),
+) -> None:
+    """Show one vacancy with its description."""
+    job = BundesagenturClient().get_details(ref)
+    typer.echo(f"{job.title} | {job.employer} | {job.location}")
+    typer.echo(f"Link: {job.url}")
+    if job.external_url:
+        typer.echo(f"Employer page: {job.external_url}")
+    description = job.description or ""
+    typer.echo(f"Description ({len(description)} chars):")
+    typer.echo(description[:chars])

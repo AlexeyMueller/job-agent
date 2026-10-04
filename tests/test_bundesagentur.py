@@ -71,6 +71,7 @@ def test_search_parses_jobs_and_sends_expected_request():
     assert first.location == "Frankfurt am Main"
     assert str(first.published) == "2026-09-24"
     assert first.external_url.startswith("https://www.finest-jobs.com/")
+    assert first.url == "https://www.arbeitsagentur.de/jobsuche/jobdetail/12811-2343588-S"
     assert first.home_office is False
     assert first.distance_km == 5
 
@@ -104,3 +105,34 @@ def test_search_raises_on_http_error():
     except httpx.HTTPStatusError:
         return
     raise AssertionError("expected HTTPStatusError")
+
+
+DETAILS = {
+    "stellenangebotsTitel": "Senior QA Engineer (m/w/d)",
+    "stellenangebotsBeschreibung": "Die campoint AG ist Technologiepartner ...",
+    "firma": "camPoint AG",
+    "gehaltsspanneVon": 60000.0,
+    "gehaltsspanneBis": 70000.0,
+    "homeofficemoeglich": True,
+    "stellenlokationen": [{"adresse": {"ort": "Seligenstadt, Hessen"}}],
+    "datumErsteVeroeffentlichung": "2026-08-19",
+    "referenznummer": "10001-1003569047-S",
+}
+
+
+@respx.mock
+def test_get_details_encodes_ref_and_parses_description():
+    # base64("10001-1003569047-S")
+    encoded = "MTAwMDEtMTAwMzU2OTA0Ny1T"
+    route = respx.get(f"{BASE_URL}/pc/v4/jobdetails/{encoded}").mock(
+        return_value=httpx.Response(200, json=DETAILS)
+    )
+
+    job = BundesagenturClient().get_details("10001-1003569047-S")
+
+    assert route.called
+    assert route.calls.last.request.headers["X-API-Key"] == "jobboerse-jobsuche"
+    assert job.title == "Senior QA Engineer (m/w/d)"
+    assert job.description.startswith("Die campoint AG")
+    assert job.salary_min == 60000.0
+    assert job.url.endswith("/jobdetail/10001-1003569047-S")

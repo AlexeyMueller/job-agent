@@ -5,6 +5,8 @@ community (https://github.com/bundesAPI/jobsuche-api). It is not an officially s
 API, so parameters and field names may change.
 """
 
+import base64
+
 import httpx
 
 from job_agent.models import Job
@@ -12,27 +14,31 @@ from job_agent.models import Job
 BASE_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service"
 API_KEY = "jobboerse-jobsuche"
 SOURCE = "bundesagentur"
+JOB_URL = "https://www.arbeitsagentur.de/jobsuche/jobdetail/{ref}"
 
 
 def parse_job(raw: dict) -> Job:
-    """Convert one item of `ergebnisliste` into a Job."""
+    """Convert a search result item or a job-details response into a Job."""
     locations = raw.get("stellenlokationen") or []
     address = (locations[0].get("adresse") or {}) if locations else {}
     published = raw.get("datumErsteVeroeffentlichung") or (
         raw.get("veroeffentlichungszeitraum") or {}
     ).get("von")
+    ref = raw["referenznummer"]
     return Job(
         source=SOURCE,
-        ref=raw["referenznummer"],
+        ref=ref,
         title=raw.get("stellenangebotsTitel") or raw.get("hauptberuf") or "",
         employer=raw.get("firma"),
         location=address.get("ort") or None,
         published=published,
+        url=JOB_URL.format(ref=ref),
         external_url=raw.get("externeURL"),
         home_office=raw.get("homeofficemoeglich"),
         distance_km=raw.get("entfernung"),
         salary_min=raw.get("gehaltsspanneVon"),
         salary_max=raw.get("gehaltsspanneBis"),
+        description=raw.get("stellenangebotsBeschreibung"),
     )
 
 
@@ -70,3 +76,13 @@ class BundesagenturClient:
         response.raise_for_status()
         items = response.json().get("ergebnisliste") or []
         return [parse_job(item) for item in items]
+
+    def get_details(self, ref: str) -> Job:
+        """Fetch a single vacancy including its full description."""
+        encoded = base64.b64encode(ref.encode()).decode()
+        response = self._client.get(
+            f"{BASE_URL}/pc/v4/jobdetails/{encoded}",
+            headers={"X-API-Key": API_KEY},
+        )
+        response.raise_for_status()
+        return parse_job(response.json())
