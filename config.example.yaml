@@ -37,3 +37,9 @@ scoring:
         Not required if the vacancy accepts or names Playwright, for example
         'Playwright, Selenium or similar'. Required only if it demands one of
         these tools and does not accept Playwright.
+sources:
+  dou:                       # jobs.dou.ua RSS feeds (open the filtered list on the site, copy the RSS link)
+    feeds: []
+    # feeds:
+    #   - "https://jobs.dou.ua/vacancies/feeds/?exp=3-5&category=QA"
+    #   - "https://jobs.dou.ua/vacancies/feeds/?exp=5plus&category=QA"

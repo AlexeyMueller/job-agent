@@ -6,6 +6,7 @@ from job_agent.config import Config, adjust_score, load_config
 from job_agent.models import Job
 from job_agent.pipeline import run
 from job_agent.scorer import ScoreResult
+from job_agent.sources.bundesagentur import BundesagenturSource
 from job_agent.tracker import Tracker
 
 
@@ -23,7 +24,7 @@ def make_job(ref, title="QA Engineer", home_office=False, distance=None, publish
     )
 
 
-class FakeSource:
+class FakeClient:
     def __init__(self, local, nationwide):
         self.local, self.nationwide = local, nationwide
         self.details = {j.ref: j for j in local + nationwide}
@@ -76,12 +77,12 @@ def sample_source():
         make_job("C", home_office=True),
         make_job("D", home_office=False),  # onsite far away: filtered out
     ]
-    return FakeSource(local, nationwide)
+    return BundesagenturSource(FakeClient(local, nationwide))
 
 
 def test_dedupes_excludes_and_filters_nationwide(config, tracker):
     scorer = FakeScorer()
-    report = run(sample_source(), scorer, tracker, {}, config)
+    report = run([sample_source()], scorer, tracker, {}, config)
     assert sorted(scorer.calls) == ["A", "C"]
     assert report.found == 3  # A, B, C (D is filtered out before counting)
     assert report.excluded == 1
@@ -90,9 +91,9 @@ def test_dedupes_excludes_and_filters_nationwide(config, tracker):
 
 def test_second_run_scores_nothing_new(config, tracker):
     scorer = FakeScorer()
-    run(sample_source(), scorer, tracker, {}, config)
+    run([sample_source()], scorer, tracker, {}, config)
     scorer.calls.clear()
-    report = run(sample_source(), scorer, tracker, {}, config)
+    report = run([sample_source()], scorer, tracker, {}, config)
     assert scorer.calls == []
     assert report.already_known == 2
 
@@ -101,14 +102,14 @@ def test_cap_limits_paid_calls_and_prefers_newest(config, tracker):
     config.scoring.max_new_per_run = 1
     local = [make_job("OLD", published="2026-09-01"), make_job("NEW", published="2026-09-30")]
     scorer = FakeScorer()
-    run(FakeSource(local, []), scorer, tracker, {}, config)
+    run([BundesagenturSource(FakeClient(local, []))], scorer, tracker, {}, config)
     assert scorer.calls == ["NEW"]
 
 
 def test_dry_run_does_not_score_or_save(config, tracker):
     scorer = FakeScorer()
     lines = []
-    report = run(sample_source(), scorer, tracker, {}, config, dry_run=True, log=lines.append)
+    report = run([sample_source()], scorer, tracker, {}, config, dry_run=True, log=lines.append)
     assert scorer.calls == []
     assert report.to_score == 2 and report.scored == 0
     assert tracker.top(0) == []
@@ -117,7 +118,7 @@ def test_dry_run_does_not_score_or_save(config, tracker):
 
 def test_failure_is_skipped_and_retried_next_time(config, tracker):
     scorer = FakeScorer(fail_on="C")
-    report = run(sample_source(), scorer, tracker, {}, config, log=lambda _: None)
+    report = run([sample_source()], scorer, tracker, {}, config, log=lambda _: None)
     assert report.failed == 1 and report.scored == 1
     assert not tracker.has("bundesagentur", "C")
 
@@ -125,7 +126,7 @@ def test_failure_is_skipped_and_retried_next_time(config, tracker):
 def test_distance_from_search_is_kept_for_adjustment(config, tracker):
     # A is local (5 km): onsite_local -15. C is nationwide, home office, hybrid: relocation -20.
     scorer = FakeScorer(score=80, work_mode="hybrid")
-    run(sample_source(), scorer, tracker, {}, config)
+    run([sample_source()], scorer, tracker, {}, config)
     rows = {r["ref"]: r for r in tracker.top(0)}
     assert rows["A"]["final_score"] == 70  # hybrid_local -10
     assert rows["C"]["final_score"] == 60  # hybrid_relocation -20
@@ -195,7 +196,7 @@ def test_adjust_score_skill_penalty_is_capped_and_ignores_unknown_names():
 
 def test_pipeline_subtracts_skill_penalty(config, tracker):
     scorer = FakeScorer(score=80, work_mode="remote", avoided=["Penetration testing"])
-    run(sample_source(), scorer, tracker, {}, config)
+    run([sample_source()], scorer, tracker, {}, config)
     assert {r["final_score"] for r in tracker.top(0)} == {70}
 
 
@@ -204,3 +205,41 @@ def test_default_avoid_list_has_selenium_with_playwright_exception():
     selenium = skills["Selenium, Cypress, Appium"]
     assert {"Selenium", "Cypress", "Appium"} <= set(selenium.aliases)
     assert "Playwright" in selenium.exception
+
+
+class BrokenSource:
+    name = "broken"
+
+    def collect(self, config):
+        raise RuntimeError("feed down")
+
+    def get_details(self, job):
+        raise AssertionError("never called")
+
+
+def test_failing_source_is_logged_and_others_still_run(config, tracker):
+    lines = []
+    scorer = FakeScorer()
+    report = run(
+        [BrokenSource(), sample_source()], scorer, tracker, {}, config, log=lines.append
+    )
+    assert any("source broken failed" in line for line in lines)
+    assert report.scored == 2
+
+
+class OtherSource:
+    name = "other"
+
+    def collect(self, config):
+        job = make_job("A")  # same ref as the Bundesagentur job "A", different source
+        return [job.model_copy(update={"source": "other", "title": "QA Engineer (other)"})]
+
+    def get_details(self, job):
+        return job
+
+
+def test_same_ref_from_different_sources_is_kept_separately(config, tracker):
+    scorer = FakeScorer(work_mode="remote")
+    run([sample_source(), OtherSource()], scorer, tracker, {}, config)
+    sources = sorted((r["source"], r["ref"]) for r in tracker.top(0))
+    assert ("other", "A") in sources and ("bundesagentur", "A") in sources

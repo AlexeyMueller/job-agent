@@ -21,32 +21,24 @@ class RunReport:
     results: list[tuple[Job, ScoreResult, int]] = field(default_factory=list)
 
 
-def collect_candidates(source, config: Config) -> list[Job]:
-    """All distinct vacancies found by the configured searches (local first, then nationwide)."""
-    s = config.search
-    found: dict[str, Job] = {}
-    for keyword in s.keywords:
-        local = source.search(
-            keyword,
-            wo=s.location,
-            umkreis=s.radius_km,
-            veroeffentlichtseit=s.published_within_days,
-            size=s.max_per_query,
-        )
-        for job in local:
-            found.setdefault(job.ref, job)
-        nationwide = source.search(
-            keyword, veroeffentlichtseit=s.published_within_days, size=s.max_per_query
-        )
-        for job in nationwide:
-            if s.nationwide_requires_home_office and not job.home_office:
-                continue
-            found.setdefault(job.ref, job)
+def collect_candidates(
+    sources, config: Config, log: Callable[[str], None] = print
+) -> list[Job]:
+    """Distinct vacancies from all sources. A failing source is logged and skipped."""
+    found: dict[tuple[str, str], Job] = {}
+    for source in sources:
+        try:
+            jobs = source.collect(config)
+        except Exception as error:  # noqa: BLE001 - one broken source must not stop the run
+            log(f"source {source.name} failed: {error}")
+            continue
+        for job in jobs:
+            found.setdefault((job.source, job.ref), job)
     return list(found.values())
 
 
 def run(
-    source,
+    sources,
     scorer,
     tracker: Tracker,
     profile: dict | None,
@@ -55,7 +47,8 @@ def run(
     log: Callable[[str], None] = print,
 ) -> RunReport:
     report = RunReport()
-    candidates = collect_candidates(source, config)
+    candidates = collect_candidates(sources, config, log)
+    by_name = {source.name: source for source in sources}
     report.found = len(candidates)
 
     excluded_words = [w.lower() for w in config.search.exclude_keywords]
@@ -74,14 +67,15 @@ def run(
 
     if dry_run:
         for job in fresh:
-            log(f"would score: {job.title} | {job.employer} | {job.location} | {job.ref}")
+            log(
+                f"would score [{job.source}]: {job.title} | {job.employer} | "
+                f"{job.location} | {job.ref}"
+            )
         return report
 
     for job in fresh:
         try:
-            detail = source.get_details(job.ref).model_copy(
-                update={"distance_km": job.distance_km}
-            )
+            detail = by_name[job.source].get_details(job)
             result = scorer.score(detail, profile)
         except Exception as error:  # noqa: BLE001 - keep going; retried on the next run
             report.failed += 1

@@ -8,8 +8,9 @@ from job_agent import __version__
 from job_agent.config import Config, load_config
 from job_agent.pipeline import run as run_pipeline
 from job_agent.profile import load_profile
-from job_agent.scorer import DEFAULT_MODEL, Scorer
-from job_agent.sources.bundesagentur import BundesagenturClient
+from job_agent.scorer import DEFAULT_MODEL, Scorer, ScoreResult
+from job_agent.sources.bundesagentur import BundesagenturClient, BundesagenturSource
+from job_agent.sources.dou import DouSource
 from job_agent.tracker import Tracker
 
 app = typer.Typer(help="AI-assisted job search agent.")
@@ -60,10 +61,35 @@ def show(
     typer.echo(description[:chars])
 
 
+def _build_sources(config: Config) -> list:
+    sources = [BundesagenturSource()]
+    if config.sources.dou.feeds:
+        sources.append(DouSource(config.sources.dou.feeds))
+    return sources
+
+
 def _require_api_key() -> None:
     if not os.getenv("ANTHROPIC_API_KEY"):
         typer.echo("ANTHROPIC_API_KEY is not set. Put it in a .env file (see .env.example).")
         raise typer.Exit(code=1)
+
+
+def _print_evaluation(result) -> None:
+    typer.echo(f"Work mode: {result.work_mode}")
+    if result.required_avoided_skills:
+        typer.echo(f"Requires skills you lack: {', '.join(result.required_avoided_skills)}")
+    typer.echo(result.summary)
+    for title, items in (
+        ("Matches", result.match_reasons),
+        ("Gaps", result.gaps),
+        ("Red flags", result.red_flags),
+    ):
+        if items:
+            typer.echo(f"{title}:")
+            for item in items:
+                typer.echo(f"  - {item}")
+    if result.language_requirement:
+        typer.echo(f"Language: {result.language_requirement}")
 
 
 @app.command()
@@ -82,21 +108,7 @@ def score(
     typer.echo(f"{job.title} | {job.employer} | {job.location}")
     typer.echo(f"Link: {job.url}")
     typer.echo(f"Score: {result.score}/100 | Apply: {'yes' if result.apply else 'no'}")
-    typer.echo(f"Work mode: {result.work_mode}")
-    if result.required_avoided_skills:
-        typer.echo(f"Requires skills you lack: {', '.join(result.required_avoided_skills)}")
-    typer.echo(result.summary)
-    for title, items in (
-        ("Matches", result.match_reasons),
-        ("Gaps", result.gaps),
-        ("Red flags", result.red_flags),
-    ):
-        if items:
-            typer.echo(f"{title}:")
-            for item in items:
-                typer.echo(f"  - {item}")
-    if result.language_requirement:
-        typer.echo(f"Language: {result.language_requirement}")
+    _print_evaluation(result)
 
 
 def _print_row(
@@ -131,7 +143,7 @@ def run(
     tracker = Tracker(db)
     try:
         report = run_pipeline(
-            BundesagenturClient(), scorer, tracker, profile, config,
+            _build_sources(config), scorer, tracker, profile, config,
             dry_run=dry_run, log=typer.echo,
         )
     finally:
@@ -170,3 +182,24 @@ def list_jobs(
             json.loads(row["result_json"]).get("required_avoided_skills", []),
         )
     typer.echo(f"{len(rows)} vacancy(ies) with final score >= {threshold}")
+
+
+@app.command()
+def explain(
+    ref: str = typer.Argument(..., help="Reference number or DOU vacancy id"),
+    db: str = typer.Option("jobs.db", help="SQLite file with processed vacancies"),
+) -> None:
+    """Show the stored evaluation of a vacancy (free: reads the local database)."""
+    tracker = Tracker(db)
+    try:
+        row = tracker.find(ref)
+    finally:
+        tracker.close()
+    if row is None:
+        typer.echo(f"No stored vacancy with reference {ref}.")
+        raise typer.Exit(code=1)
+    result = ScoreResult.model_validate_json(row["result_json"])
+    typer.echo(f"{row['title']} | {row['employer']} | {row['location']}")
+    typer.echo(f"Link: {row['url']}")
+    typer.echo(f"Score: {row['final_score']}/100 (model {row['model_score']})")
+    _print_evaluation(result)

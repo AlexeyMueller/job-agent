@@ -201,3 +201,11 @@ def test_exception_text_is_sent_with_the_skill():
     message = client.messages.last_kwargs["messages"][0]["content"]
     assert "- Selenium: Selenium [exception: Not required if Playwright]" in message
     assert "[exception:" in client.messages.last_kwargs["system"]
+
+
+def test_system_prompt_covers_location_restrictions():
+    client = FakeClient([tool_block(GOOD_INPUT)])
+    Scorer(client=client).score(JOB, PROFILE)
+    system = client.messages.last_kwargs["system"]
+    assert "Ukraine only" in system
+    assert "red flag" in system

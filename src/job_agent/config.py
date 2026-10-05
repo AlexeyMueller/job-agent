@@ -74,9 +74,18 @@ class ScoringConfig(BaseModel):
     max_skill_penalty: int = -30  # total cap
 
 
+class DouConfig(BaseModel):
+    feeds: list[str] = Field(default_factory=list)  # RSS feed URLs from jobs.dou.ua
+
+
+class SourcesConfig(BaseModel):
+    dou: DouConfig = Field(default_factory=DouConfig)
+
+
 class Config(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    sources: SourcesConfig = Field(default_factory=SourcesConfig)
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:

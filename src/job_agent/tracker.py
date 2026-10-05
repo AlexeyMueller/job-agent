@@ -66,6 +66,9 @@ class Tracker:
         )
         self._conn.commit()
 
+    def find(self, ref: str) -> sqlite3.Row | None:
+        return self._conn.execute("SELECT * FROM jobs WHERE ref = ?", (ref,)).fetchone()
+
     def top(self, min_score: int = 0, limit: int = 50) -> list[sqlite3.Row]:
         return self._conn.execute(
             "SELECT * FROM jobs WHERE final_score >= ? "

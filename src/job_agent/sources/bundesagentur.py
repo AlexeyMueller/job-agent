@@ -9,6 +9,7 @@ import base64
 
 import httpx
 
+from job_agent.config import Config
 from job_agent.models import Job
 
 BASE_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service"
@@ -86,3 +87,38 @@ class BundesagenturClient:
         )
         response.raise_for_status()
         return parse_job(response.json())
+
+
+class BundesagenturSource:
+    """Adapter used by the pipeline: local search plus a nationwide search."""
+
+    name = SOURCE
+
+    def __init__(self, client: BundesagenturClient | None = None) -> None:
+        self._client = client or BundesagenturClient()
+
+    def collect(self, config: Config) -> list[Job]:
+        s = config.search
+        found: dict[str, Job] = {}
+        for keyword in s.keywords:
+            local = self._client.search(
+                keyword,
+                wo=s.location,
+                umkreis=s.radius_km,
+                veroeffentlichtseit=s.published_within_days,
+                size=s.max_per_query,
+            )
+            for job in local:
+                found.setdefault(job.ref, job)
+            nationwide = self._client.search(
+                keyword, veroeffentlichtseit=s.published_within_days, size=s.max_per_query
+            )
+            for job in nationwide:
+                if s.nationwide_requires_home_office and not job.home_office:
+                    continue
+                found.setdefault(job.ref, job)
+        return list(found.values())
+
+    def get_details(self, job: Job) -> Job:
+        detail = self._client.get_details(job.ref)
+        return detail.model_copy(update={"distance_km": job.distance_km})
